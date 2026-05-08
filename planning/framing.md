@@ -10,6 +10,8 @@
 
 **Date**: 2026-05-08
 **Spike status**: PASS — end-to-end loop validated manually.
+**Repo**: https://github.com/duquesnay/claude-channel-slack-zeta
+**License**: Apache 2.0
 
 ---
 
@@ -29,13 +31,20 @@ For OSS forks: someone wanting to bridge their own Slack workspace to a `claude 
 
 A developer (solo or team) can fork this repo, configure their own Slack app and tokens, and have a fully functional `claude --channels` Slack bot in their workspace — with the same access-control model (pairing + allowlist) as the official Discord plugin.
 
-### Success Criteria (Spike — Already Met)
+### Definition of Done
 
+**Spike DONE** (all criteria met as of 2026-05-08):
 - [x] Slack DM from paired user reaches Claude as a channel notification
 - [x] Claude's reply appears in the same Slack DM within normal response time
 - [x] Access control (pairing flow) blocks unpaired senders
 - [x] Bot token and session survive a `tmux` restart without re-pairing
 - [x] MCP log shows `Channel notifications registered` (not `skipped`)
+
+**Next milestones** (post-spike, not yet started): tracked as GitHub issues
+- [#1 Ack reaction](https://github.com/duquesnay/claude-channel-slack-zeta/issues/1) — done when paired user's DM gets `:eyes:` within 500ms
+- [#2 Progression reaction](https://github.com/duquesnay/claude-channel-slack-zeta/issues/2) — done when tool-use shows `:hourglass:` → `:white_check_mark:`
+- [#3 Native Slack status](https://github.com/duquesnay/claude-channel-slack-zeta/issues/3) — done when "is thinking..." status appears in DM thread
+- [#4 Streaming](https://github.com/duquesnay/claude-channel-slack-zeta/issues/4) — done when long responses chunk-update in Slack without 429 errors
 
 ### Timeline & Scope
 
@@ -111,10 +120,10 @@ A Claude Code plugin that listens to Slack DMs via Socket Mode and routes them t
 
 | Issue | Feature | Effort |
 |-------|---------|--------|
-| #1 | Ack reaction on inbound DM (`:eyes:`, configurable via `access.json`) | Low |
-| #2 | Progression reaction on tool-use (`:hourglass:` → `:white_check_mark:`) | Mid |
-| #3 | Native Slack status via `assistant.threads.setStatus` | Mid |
-| #4 | Streaming responses (`reply_open`/`reply_chunk`/`reply_close` + `chat.update`) | High |
+| [#1](https://github.com/duquesnay/claude-channel-slack-zeta/issues/1) | Ack reaction on inbound DM (`:eyes:`, configurable via `access.json`) | Low |
+| [#2](https://github.com/duquesnay/claude-channel-slack-zeta/issues/2) | Progression reaction on tool-use (`:hourglass:` → `:white_check_mark:`) | Mid |
+| [#3](https://github.com/duquesnay/claude-channel-slack-zeta/issues/3) | Native Slack status via `assistant.threads.setStatus` | Mid |
+| [#4](https://github.com/duquesnay/claude-channel-slack-zeta/issues/4) | Streaming responses (`reply_open`/`reply_chunk`/`reply_close` + `chat.update`) | High |
 
 **Explicit non-goals:**
 - Group/channel message support (DM only for now)

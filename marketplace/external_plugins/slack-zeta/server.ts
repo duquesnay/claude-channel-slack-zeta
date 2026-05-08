@@ -27,6 +27,7 @@ import { randomBytes } from 'crypto'
 import { readFileSync, writeFileSync, mkdirSync, chmodSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
+import { z } from 'zod'
 
 const STATE_DIR = process.env.SLACK_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'slack-zeta')
 const ACCESS_FILE = join(STATE_DIR, 'access.json')
@@ -142,6 +143,11 @@ const mcp = new Server(
       tools: {},
       experimental: {
         'claude/channel': {},
+        // Opt-in to permission relay: claude code forwards tool approval
+        // prompts here so we can show progression (reaction → ⏳) and DM
+        // the prompt for remote answer. We authenticate via gate() so
+        // declaring this is safe (only allowFrom can reply with verdict).
+        'claude/channel/permission': {},
       },
     },
     instructions: [
@@ -154,6 +160,55 @@ const mcp = new Server(
 )
 
 const slack = new WebClient(BOT_TOKEN)
+
+// ============================================================================
+// Permission relay — claude code forwards tool-approval prompts here. Two jobs:
+//   1) Update the inbound reaction to ⏳ so the sender sees "working on it".
+//   2) DM the prompt to allowlisted users so they can answer remotely.
+// Verdicts come back via the inbound message handler (PERMISSION_REPLY_RE).
+// ============================================================================
+
+// Five lowercase letters minus 'l' (claude code spec). Tolerant to phone
+// autocorrect capitalization; lowercase the captured ID before relaying.
+const PERMISSION_REPLY_RE = /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i
+
+const PermissionRequestSchema = z.object({
+  method: z.literal('notifications/claude/channel/permission_request'),
+  params: z.object({
+    request_id: z.string(),
+    tool_name: z.string(),
+    description: z.string(),
+    input_preview: z.string(),
+  }),
+})
+
+mcp.setNotificationHandler(PermissionRequestSchema, async ({ params }) => {
+  const { request_id, tool_name, description } = params
+  const access = loadAccess()
+
+  // Update reaction on the most recent inbound (per-chat) to ⏳.
+  // Best-effort: if no inbound tracked, just skip the reaction swap.
+  if (access.ackReaction) {
+    for (const chatId of lastInbound.keys()) {
+      void setReaction(chatId, 'hourglass_flowing_sand')
+    }
+  }
+
+  // DM the prompt to every paired user. They reply with `y <id>` or `n <id>`
+  // to grant/deny. The local terminal dialog stays open — first answer wins.
+  const text =
+    `🔐 Claude wants to run *${tool_name}*: ${description}\n` +
+    `Reply \`y ${request_id}\` to allow, \`n ${request_id}\` to deny.`
+  for (const userId of access.allowFrom) {
+    void slack.conversations.open({ users: userId }).then(open => {
+      const channel = open.channel?.id
+      if (!channel) return
+      return slack.chat.postMessage({ channel, text })
+    }).catch(err => {
+      process.stderr.write(`slack-zeta: permission relay to ${userId} failed: ${err}\n`)
+    })
+  }
+})
 
 mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
@@ -190,6 +245,18 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
     throw new Error(`channel ${chat_id} is not allowlisted — pair via /slack-zeta:access`)
   }
   const res = await slack.chat.postMessage({ channel: chat_id, text, thread_ts })
+
+  // Reply landed — swap the inbound's reaction for ✅. Fire-and-forget;
+  // the model's tool-call latency is already paid for, no need to await.
+  // setReaction() handles whatever reaction is currently set (👀 or ⏳).
+  if (lastInbound.has(chat_id) && access.ackReaction) {
+    void setReaction(chat_id, 'white_check_mark').then(() => {
+      // Clear so subsequent reply chunks (or future inbound tracking) don't
+      // re-touch this resolved message.
+      lastInbound.delete(chat_id)
+    })
+  }
+
   return { content: [{ type: 'text', text: `sent ts=${res.ts}` }] }
 })
 
@@ -202,6 +269,37 @@ const socket = new SocketModeClient({ appToken: APP_TOKEN })
 // chat_id (IM channel) → user ID. Populated as DMs arrive. Outbound gate
 // uses this to confirm we're sending to a paired user.
 const dmChannelUsers = new Map<string, string>()
+
+// chat_id → {ts, reaction} of the most recent inbound message in that chat.
+// Used to move the ack reaction along its lifecycle:
+//   👀 (eyes) inbound received
+//   ⏳ (hourglass_flowing_sand) claude calling tools
+//   ✅ (white_check_mark) reply landed
+// Each new inbound replaces the previous entry.
+const lastInbound = new Map<string, { ts: string; reaction: string }>()
+
+async function setReaction(chatId: string, newName: string) {
+  const cur = lastInbound.get(chatId)
+  if (!cur) return
+  if (cur.reaction === newName) return
+  const tasks: Promise<unknown>[] = []
+  if (cur.reaction) {
+    tasks.push(
+      slack.reactions.remove({ channel: chatId, timestamp: cur.ts, name: cur.reaction }).catch(() => {
+        // Reaction may not exist (race or never added). Silent.
+      }),
+    )
+  }
+  if (newName) {
+    tasks.push(
+      slack.reactions.add({ channel: chatId, timestamp: cur.ts, name: newName }).catch(err => {
+        process.stderr.write(`slack-zeta: reaction add ${newName} failed: ${err}\n`)
+      }),
+    )
+  }
+  cur.reaction = newName
+  await Promise.all(tasks)
+}
 
 socket.on('message', async ({ event, ack }) => {
   await ack()
@@ -232,17 +330,35 @@ socket.on('message', async ({ event, ack }) => {
     return
   }
 
-  // Ack reaction — instant feedback to the sender that the message was
-  // received and is being processed. Fire-and-forget; the user's response
-  // path must not wait on this. result.access already loaded by gate().
-  if (result.access.ackReaction) {
-    slack.reactions.add({
+  // Permission-reply intercept: a paired user replying with `y xxxxx` /
+  // `n xxxxx` to a permission relay prompt. Emit the structured verdict
+  // back to claude code instead of forwarding the text as chat. Sender is
+  // already gate()-approved so we trust the reply.
+  const permMatch = PERMISSION_REPLY_RE.exec(event.text)
+  if (permMatch) {
+    const allow = permMatch[1].toLowerCase().startsWith('y')
+    void mcp.notification({
+      method: 'notifications/claude/channel/permission',
+      params: {
+        request_id: permMatch[2].toLowerCase(),
+        behavior: allow ? 'allow' : 'deny',
+      },
+    })
+    // React to acknowledge — the user knows their verdict was recorded.
+    void slack.reactions.add({
       channel: chatId,
       timestamp: event.ts,
-      name: result.access.ackReaction,
-    }).catch(err => {
-      process.stderr.write(`slack-zeta: ack reaction failed: ${err}\n`)
-    })
+      name: allow ? 'white_check_mark' : 'x',
+    }).catch(() => {})
+    return
+  }
+
+  // Ack reaction — instant feedback to the sender. Tracked in lastInbound
+  // so the reply tool / permission relay can swap it (👀 → ⏳ → ✅).
+  // Fire-and-forget; the response path must not wait.
+  if (result.access.ackReaction) {
+    lastInbound.set(chatId, { ts: event.ts, reaction: '' })
+    void setReaction(chatId, result.access.ackReaction)
   }
 
   // deliver
