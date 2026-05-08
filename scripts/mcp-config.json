@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "slack-zeta": {
+      "command": "bun",
+      "args": ["run", "--cwd", "/Users/guillaume/dev/nestor/ai-gateway-zeta/plugin", "--shell=bun", "--silent", "start"]
+    }
+  }
+}

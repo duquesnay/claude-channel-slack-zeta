@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.guillaume.claude-channel-slack-zeta</string>
+    <key>Comment</key>
+    <string>Spike zeta. claude --channels server:slack-zeta --plugin-dir ~/dev/nestor/ai-gateway-zeta/plugin. Workspace robotique-yhom. Restart: sudo launchctl kickstart -k system/ai.guillaume.claude-channel-slack-zeta</string>
+    <key>UserName</key>
+    <string>guillaume</string>
+    <key>WorkingDirectory</key>
+    <string>/Users/guillaume/dev/nestor/ai-gateway-zeta</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/guillaume/dev/nestor/ai-gateway-zeta/scripts/run-channel.sh</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+    <key>StandardOutPath</key>
+    <string>/Users/guillaume/dev/nestor/ai-gateway-zeta/logs/launchd.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/guillaume/dev/nestor/ai-gateway-zeta/logs/launchd.stderr.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/guillaume</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/Users/guillaume/.local/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>

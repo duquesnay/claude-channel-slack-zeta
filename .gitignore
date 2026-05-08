@@ -1,0 +1,25 @@
+# Runtime artifacts
+logs/
+*.log
+
+# Plugin install artifacts
+**/node_modules/
+**/.npm/
+**/.bun/
+
+# State files (kept under ~/.claude/channels/slack-zeta/, never here)
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Tmp
+*.tmp
+*.swp
+
+# Test artifacts
+/tmp-debug/

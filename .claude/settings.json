@@ -1,0 +1,12 @@
+{
+  "enabledPlugins": {
+    "slack-zeta@ai-gateway-zeta": true
+  },
+  "allowedChannelPlugins": [
+    {
+      "marketplace": "ai-gateway-zeta",
+      "plugin": "slack-zeta"
+    }
+  ],
+  "channelsEnabled": true
+}

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "ai-gateway-zeta",
+  "description": "Local marketplace for the zeta spike (Slack via claude --channels plugin pattern).",
+  "owner": {"name": "guillaume"},
+  "plugins": [
+    {
+      "name": "slack-zeta",
+      "description": "Slack channel for Claude Code (zeta spike).",
+      "category": "messaging",
+      "source": "./external_plugins/slack-zeta"
+    }
+  ]
+}
