@@ -43,9 +43,10 @@ Tokens à récupérer:
 - `xoxb-...` (Bot Token, OAuth Install)
 - `xapp-...` (App-Level Token, Socket Mode, scope `connections:write`)
 
-Bot scopes minimum: `chat:write`, `im:history`, `im:read`.
-Bot events: `message.im`. **Privileged Gateway Intents** Message
-Content: à activer dans Dev Portal (gotcha Slack universel).
+Bot scopes minimum: `chat:write`, `im:history`, `im:read`,
+`reactions:write` (depuis #1, ack reaction). Bot events:
+`message.im`. **Privileged Gateway Intents** Message Content: à
+activer dans Dev Portal (gotcha Slack universel).
 
 ### 2. Tokens sur disque
 

@@ -23,6 +23,7 @@ oauth_config:
       - chat:write
       - im:history
       - im:read
+      - reactions:write
 
 settings:
   event_subscriptions:

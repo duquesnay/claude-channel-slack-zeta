@@ -68,6 +68,10 @@ interface Access {
   dmPolicy: 'pairing' | 'allowlist' | 'disabled'
   allowFrom: string[]   // Slack user IDs (Uxxxxxx)
   pending: Record<string, { senderId: string; chatId: string; createdAt: number; expiresAt: number }>
+  // Emoji name (no colons, e.g. "eyes" not ":eyes:") added as a reaction on
+  // every delivered inbound message so the sender knows it was received.
+  // Empty string disables. Default: "eyes" (👀).
+  ackReaction?: string
 }
 
 function loadAccess(): Access {
@@ -77,9 +81,10 @@ function loadAccess(): Access {
       dmPolicy: raw.dmPolicy ?? 'pairing',
       allowFrom: Array.isArray(raw.allowFrom) ? raw.allowFrom : [],
       pending: raw.pending ?? {},
+      ackReaction: typeof raw.ackReaction === 'string' ? raw.ackReaction : 'eyes',
     }
   } catch {
-    return { dmPolicy: 'pairing', allowFrom: [], pending: {} }
+    return { dmPolicy: 'pairing', allowFrom: [], pending: {}, ackReaction: 'eyes' }
   }
 }
 
@@ -225,6 +230,19 @@ socket.on('message', async ({ event, ack }) => {
       process.stderr.write(`slack-zeta: failed to send pairing code: ${err}\n`)
     }
     return
+  }
+
+  // Ack reaction — instant feedback to the sender that the message was
+  // received and is being processed. Fire-and-forget; the user's response
+  // path must not wait on this. result.access already loaded by gate().
+  if (result.access.ackReaction) {
+    slack.reactions.add({
+      channel: chatId,
+      timestamp: event.ts,
+      name: result.access.ackReaction,
+    }).catch(err => {
+      process.stderr.write(`slack-zeta: ack reaction failed: ${err}\n`)
+    })
   }
 
   // deliver
