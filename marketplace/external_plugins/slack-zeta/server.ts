@@ -249,12 +249,15 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
   // Reply landed — swap the inbound's reaction for ✅. Fire-and-forget;
   // the model's tool-call latency is already paid for, no need to await.
   // setReaction() handles whatever reaction is currently set (👀 or ⏳).
-  if (lastInbound.has(chat_id) && access.ackReaction) {
+  const cur = lastInbound.get(chat_id)
+  if (cur && access.ackReaction) {
     void setReaction(chat_id, 'white_check_mark').then(() => {
       // Clear so subsequent reply chunks (or future inbound tracking) don't
       // re-touch this resolved message.
       lastInbound.delete(chat_id)
     })
+    // Clear the native assistant status (no-op if app isn't AI-mode).
+    void setStatus(chat_id, cur.ts, '')
   }
 
   return { content: [{ type: 'text', text: `sent ts=${res.ts}` }] }
@@ -277,6 +280,30 @@ const dmChannelUsers = new Map<string, string>()
 //   ✅ (white_check_mark) reply landed
 // Each new inbound replaces the previous entry.
 const lastInbound = new Map<string, { ts: string; reaction: string }>()
+
+// Native Slack assistant status — "is thinking…" indicator native to Slack
+// AI assistants. Requires app type "Agents & AI Apps" + scope assistant:write.
+// Best-effort: if the app isn't configured for it, the API returns an error
+// and we silently continue (the reaction-based progression in setReaction()
+// covers the same UX without needing this).
+async function setStatus(chatId: string, threadTs: string, status: string) {
+  try {
+    // @ts-ignore — assistant.threads.setStatus may be missing from older
+    // @slack/web-api type defs but the runtime API is stable.
+    await slack.assistant.threads.setStatus({
+      channel_id: chatId,
+      thread_ts: threadTs,
+      status,
+    })
+  } catch (err) {
+    // Common cause: app type isn't "Agents & AI Apps" yet, or scope
+    // assistant:write missing. Don't spam stderr on every message; log
+    // once-per-session would be nicer but YAGNI for the spike.
+    if (process.env.SLACK_ZETA_DEBUG_STATUS) {
+      process.stderr.write(`slack-zeta: setStatus failed (app may need Agents&AI mode): ${err}\n`)
+    }
+  }
+}
 
 async function setReaction(chatId: string, newName: string) {
   const cur = lastInbound.get(chatId)
@@ -360,6 +387,10 @@ socket.on('message', async ({ event, ack }) => {
     lastInbound.set(chatId, { ts: event.ts, reaction: '' })
     void setReaction(chatId, result.access.ackReaction)
   }
+
+  // Native Slack assistant status — best-effort, no-op if app isn't
+  // configured for AI assistants. Cleared when reply lands.
+  void setStatus(chatId, event.ts, 'is thinking…')
 
   // deliver
   mcp.notification({

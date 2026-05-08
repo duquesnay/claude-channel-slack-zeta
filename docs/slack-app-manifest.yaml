@@ -25,6 +25,9 @@ oauth_config:
       - im:read
       - im:write
       - reactions:write
+      # Optional — enables native "is thinking..." status (issue #3).
+      # Requires app type "Agents & AI Apps" in Dev Portal > AI Features.
+      - assistant:write
 
 settings:
   event_subscriptions:
