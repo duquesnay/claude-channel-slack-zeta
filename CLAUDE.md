@@ -190,19 +190,6 @@ ne peut littéralement pas écrire au bot.
 
 Voir [`docs/slack-app-manifest.yaml`](docs/slack-app-manifest.yaml).
 
-## Pistes d'évolution
-
-| Idée                              | Effort  | Notes                                                                     |
-| --------------------------------- | ------- | ------------------------------------------------------------------------- |
-| ~~Auto-Enter prompt → daemon launchd~~ | done    | Fait via `scripts/zeta-launcher.exp` + LaunchDaemon (2026-05-09)         |
-| Skill `/slack-zeta:access`         | low     | Calque `/discord:access` (pair, allow, status, group)                     |
-| Ack reaction inbound (:eyes:)      | low     | `reactions.add` dès message reçu, comme `ackReaction` du plugin discord  |
-| Reaction de progression            | mid     | Hook sur `notifications/claude/channel/permission_request` → :hourglass: |
-| Status Slack natif                 | mid     | `assistant.threads.setStatus` (besoin app `bot+assistant`)                |
-| Streaming des réponses             | high    | `reply_open` / `reply_chunk` / `reply_close` + `chat.update` throttled    |
-| Permission relay                   | mid     | Déjà fait dans plugin discord — port quasi 1-pour-1                       |
-| Pin / unpin                        | low     | Slack `pins.add` quand claude pousse un msg "important"                   |
-
 ## Comparatif Slack jasquier vs zeta
 
 | Aspect            | claude-channel-slack (jasquier)      | claude --channels plugin (zeta) |
