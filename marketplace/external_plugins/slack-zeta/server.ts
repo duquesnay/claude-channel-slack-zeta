@@ -311,8 +311,24 @@ function ackReplied(chat_id: string, access: Access) {
   }
 }
 
-function assertAllowlisted(chat_id: string, access: Access) {
-  const userId = dmChannelUsers.get(chat_id)
+async function assertAllowlisted(chat_id: string, access: Access) {
+  // dmChannelUsers is volatile: a fresh process (esp. claude --resume)
+  // hasn't seen any inbound yet, so the cache is empty. Fall back to
+  // conversations.info to resolve the IM channel's user. Cache the result
+  // so we only pay the API call once per chat per process lifetime.
+  let userId = dmChannelUsers.get(chat_id)
+  if (!userId) {
+    try {
+      const info = await slack.conversations.info({ channel: chat_id })
+      const user = info.channel?.user
+      if (user) {
+        userId = user
+        dmChannelUsers.set(chat_id, user)
+      }
+    } catch (err) {
+      throw new Error(`channel ${chat_id} lookup failed: ${err}`)
+    }
+  }
   if (!userId || !access.allowFrom.includes(userId)) {
     throw new Error(`channel ${chat_id} is not allowlisted — pair via /slack-zeta:access`)
   }
@@ -324,7 +340,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
 
   if (req.params.name === 'reply') {
     const { chat_id, text, thread_ts } = args as { chat_id: string; text: string; thread_ts?: string }
-    assertAllowlisted(chat_id, access)
+    await assertAllowlisted(chat_id, access)
     const res = await slack.chat.postMessage({ channel: chat_id, text, thread_ts })
     ackReplied(chat_id, access)
     return { content: [{ type: 'text', text: `sent ts=${res.ts}` }] }
@@ -332,7 +348,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
 
   if (req.params.name === 'reply_open') {
     const { chat_id, thread_ts } = args as { chat_id: string; thread_ts?: string }
-    assertAllowlisted(chat_id, access)
+    await assertAllowlisted(chat_id, access)
     // Slack rejects empty text; use a thin placeholder we'll overwrite.
     const res = await slack.chat.postMessage({ channel: chat_id, text: '…', thread_ts })
     if (!res.ts) throw new Error('reply_open: Slack returned no ts')
