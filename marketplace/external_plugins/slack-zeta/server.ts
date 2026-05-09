@@ -153,8 +153,7 @@ const mcp = new Server(
     instructions: [
       'Slack channel (zeta spike). Inbound messages arrive as <channel source="slack" chat_id="..." user="..." ts="...">.',
       '',
-      'For SHORT responses (<200 chars), use the reply tool — single shot.',
-      'For LONG responses (multi-paragraph, code, explanations), prefer the streaming tools to give the user feedback as you generate:',
+      'Always use the streaming tools for every response (empirical validation of issue #9):',
       '  1. reply_open(chat_id) → returns a handle (Slack ts). Posts an empty message.',
       '  2. reply_chunk(handle, text) → updates the message with the new accumulated text. Call repeatedly.',
       '  3. reply_close(handle) → optional finalize. Mostly informational.',
