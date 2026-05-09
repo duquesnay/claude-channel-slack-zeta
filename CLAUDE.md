@@ -171,7 +171,7 @@ Anthropic).
 
 ### Gotcha #3 — `--permission-mode auto` + `--allowedTools` requis
 
-Sans `--allowedTools "mcp__plugin_slack_zeta_slack_zeta__*"` , le
+Sans `--allowedTools "mcp__plugin_slack-zeta_slack-zeta__*"` , le
 classifier auto-mode refuse l'appel du tool `reply` (logs:
 `~/.claude/logs/permissions.log` "Permission denied by auto-mode
 classifier"). Symptôme côté user: bot pense pendant 20s puis
