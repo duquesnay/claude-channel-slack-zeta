@@ -6,30 +6,29 @@ Runbook ops du bot Slack zeta. Pour le pourquoi, voir
 
 ## Mode actuel
 
-Bot tourne en **tmux interactive** (pas en LaunchDaemon — le prompt
-de confirmation `--dangerously-load-development-channels` bloque le
-mode headless, voir [Gotcha #1](#gotcha-1-prompt-dev-channels-au-boot)).
+Bot tourne en **LaunchDaemon système** (`ai.guillaume.claude-channel-slack-zeta`)
+via wrapper expect qui dismiss le prompt dev-channels (voir
+[Gotcha #1](#gotcha-1-prompt-dev-channels-au-boot) — résolu, choix
+documenté dans [`planning/decision-journal.md`](planning/decision-journal.md)).
 
 Workspace Slack: `robotique-yhom`. App: `claude-zeta`. Bot user:
 `@claude-zeta` (snowflake `U0B3DEULF24`, bot_id `B0B2NQGL1J8`).
 
-## Commande de lancement (manuel via tmux)
+## Restart / Stop (sous launchd)
 
 ```bash
-tmux new-session -d -s zeta-bot -x 200 -y 50
-tmux send-keys -t zeta-bot \
-  "/opt/homebrew/bin/claude \
-    --dangerously-load-development-channels plugin:slack-zeta@ai-gateway-zeta \
-    --name claude_of_slack \
-    --permission-mode auto \
-    --allowedTools 'mcp__plugin_slack_zeta_slack_zeta__*'" Enter
-tmux attach -t zeta-bot
-# Press Enter on "I am using this for local development" prompt.
-```
+# Restart (kickstart -k = SIGTERM puis respawn)
+sudo launchctl kickstart -k system/ai.guillaume.claude-channel-slack-zeta
 
-Une fois Enter pressé, claude affiche `Listening for channel
-messages from: plugin:slack-zeta@ai-gateway-zeta` et le bot reçoit
-les DMs Slack.
+# Stop sans respawn (désactive jusqu'au prochain bootstrap/reboot)
+sudo launchctl bootout system/ai.guillaume.claude-channel-slack-zeta
+
+# Re-bootstrap après bootout
+sudo launchctl bootstrap system /Library/LaunchDaemons/ai.guillaume.claude-channel-slack-zeta.plist
+
+# State / PID
+sudo launchctl print system/ai.guillaume.claude-channel-slack-zeta | grep -E 'state|pid|last exit'
+```
 
 ## Setup initial (one-time)
 
@@ -137,7 +136,7 @@ ls -t ~/Library/Caches/claude-cli-nodejs/-Users-guillaume-dev-nestor-ai-gateway-
 
 ## Gotchas
 
-### Gotcha #1 — Prompt dev-channels au boot
+### Gotcha #1 — Prompt dev-channels au boot (résolu)
 
 `--dangerously-load-development-channels` déclenche un prompt TUI
 au boot:
@@ -149,14 +148,16 @@ WARNING: Loading development channels
 Enter to confirm
 ```
 
-**Avant** que ce prompt soit confirmé, **AUCUN MCP ne démarre**.
-Pas même context7/playwright. C'est ce qui freeze le launchd-mode
-(le pty alloué par `script -q /dev/null` ne reçoit pas l'Enter).
+**Avant** que ce prompt soit confirmé, **AUCUN MCP ne démarre**
+(pas même context7/playwright). C'est ce qui freezait jadis le
+launchd-mode (`script -q /dev/null` n'a pas de canal pour envoyer
+l'Enter).
 
-Workarounds possibles (pas encore implémentés):
-- `expect` script qui watch "Enter to confirm" et envoie `\r`
-- Persistance d'acceptance entre runs (à creuser dans le binaire)
-- Tmux daemon-mode permanent (la session survit aux logout)
+**Résolu (2026-05-09)**: `scripts/zeta-launcher.exp` spawn claude
+dans un pty alloué par expect, sleep 3s, send `\r`, sleep 3s, send
+`\r` (filet de sécurité). Voir
+[`planning/decision-journal.md`](planning/decision-journal.md) pour
+les alternatives écartées et signaux de revoir cette décision.
 
 ### Gotcha #2 — `allowedChannelPlugins` user-scope ignoré
 
@@ -193,7 +194,7 @@ Voir [`docs/slack-app-manifest.yaml`](docs/slack-app-manifest.yaml).
 
 | Idée                              | Effort  | Notes                                                                     |
 | --------------------------------- | ------- | ------------------------------------------------------------------------- |
-| Auto-Enter prompt → daemon launchd | mid     | `expect` ou tmux daemon-mode persistant                                   |
+| ~~Auto-Enter prompt → daemon launchd~~ | done    | Fait via `scripts/zeta-launcher.exp` + LaunchDaemon (2026-05-09)         |
 | Skill `/slack-zeta:access`         | low     | Calque `/discord:access` (pair, allow, status, group)                     |
 | Ack reaction inbound (:eyes:)      | low     | `reactions.add` dès message reçu, comme `ackReaction` du plugin discord  |
 | Reaction de progression            | mid     | Hook sur `notifications/claude/channel/permission_request` → :hourglass: |
@@ -209,7 +210,7 @@ Voir [`docs/slack-app-manifest.yaml`](docs/slack-app-manifest.yaml).
 | Workspace         | GijiCosyNest                         | robotique-yhom                   |
 | User Unix         | jasquier                             | guillaume                        |
 | Process model     | bun daemon spawn `claude -p` par msg | claude --channels persistant     |
-| Daemon            | LaunchDaemon system natif            | Tmux interactif (prompt bloque)  |
+| Daemon            | LaunchDaemon system natif            | LaunchDaemon system + expect launcher |
 | State             | `~jasquier/.claude/channels/slack/`  | `~guillaume/.claude/channels/slack-zeta/` |
 | Session continuity | sessions.json + --session-id        | Native via mémoire claude        |
 | Maintenance       | Code maintenu localement             | Plugin custom (idéalement upstream Anthropic) |

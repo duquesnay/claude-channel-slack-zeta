@@ -1,0 +1,28 @@
+#!/usr/bin/env expect -f
+
+# Launcher for claude --channels Slack daemon (claude_of_slack).
+# Spawned by /Library/LaunchDaemons/ai.guillaume.claude-channel-slack-zeta.plist
+# via run-channel.sh. Allocates a pty, dismisses the dev-channels confirmation
+# prompt (Gotcha #1 in CLAUDE.md), then streams until claude exits — at which
+# point launchd KeepAlive respawns us.
+
+set timeout -1
+log_user 1
+
+cd /Users/guillaume/dev/nestor/ai-gateway-zeta
+
+spawn /opt/homebrew/bin/claude \
+    --resume claude_of_slack \
+    --dangerously-load-development-channels plugin:slack-zeta@ai-gateway-zeta \
+    --name claude_of_slack \
+    --permission-mode auto \
+    --allowedTools "mcp__plugin_slack-zeta_slack-zeta__*"
+
+# Blind Enter sends to dismiss the dev-channels TUI confirmation.
+# Robust against prompt-text changes; no-op if prompt no longer appears.
+sleep 3
+send "\r"
+sleep 3
+send "\r"
+
+expect eof
