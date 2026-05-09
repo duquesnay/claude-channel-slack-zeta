@@ -137,7 +137,7 @@ function gate(senderId: string, chatId: string): GateResult {
 // ============================================================================
 
 const mcp = new Server(
-  { name: 'slack-zeta', version: '0.0.1' },
+  { name: 'slack-zeta', version: '1.0.0' },
   {
     capabilities: {
       tools: {},

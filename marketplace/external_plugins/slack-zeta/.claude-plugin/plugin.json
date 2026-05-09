@@ -1,6 +1,6 @@
 {
   "name": "slack-zeta",
   "description": "Slack channel for Claude Code (zeta spike). Workspace robotique-yhom.",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "keywords": ["slack", "messaging", "channel", "mcp"]
 }
