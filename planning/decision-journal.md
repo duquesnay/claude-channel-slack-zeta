@@ -42,3 +42,65 @@ ThrottleInterval=30s anti-thrashing.
 tmux qui poll, garder la même plist. ~30min.
 
 **Owner**: guillaume. **Last review**: 2026-05-09.
+
+---
+
+## 2026-05-10 — pkill défensif + fail-fast assertion dans launcher
+
+**Status**: Active
+
+**Problem**: Restarts répétés du daemon claude --channels accumulaient
+des bun MCP server.ts orphans (PPID=1 après mort du parent claude),
+qui monopolisaient la session Slack Socket Mode (single-client par
+xapp- token). Slack délivrait au plus ancien encore vivant — sans
+parent claude pour consommer les notifications MCP → events
+disparaissaient. Symptôme piège: réactions/status fonctionnaient
+(le vieux bun les posait via Slack API directe) mais claude ne
+recevait jamais l'inbound.
+
+**Root Cause**: `launchctl bootout` puis `bootstrap` ne nettoient pas
+les processus enfants spawnés par claude (les MCP plugins). Chaque
+cycle laisse un fantôme. Le pattern claude --channels avec un MCP
+qui maintient une connexion stateful externe (WebSocket Slack)
+expose ce problème — pas spécifique à zeta.
+
+**Counter-measure**: Dans `scripts/zeta-launcher.exp`:
+1. `pkill -f "bun.*ai-gateway-zeta/marketplace/external_plugins/slack-zeta"`
+   avant `spawn` → kill les orphans
+2. Assertion fail-fast: si `pgrep | wc -l > 0` après pkill (race ou
+   permission), `exit 1` → launchd KeepAlive respawn dans 30s plutôt
+   que démarrer un silent-bot
+
+**Alternatives écartées**:
+- **Vérification dans server.ts** (process-local) au boot: portable
+  mais pas effective si le bun précédent est figé sans recevoir
+  de signaux (garbage collection bloqué). Le pkill SIGTERM externe
+  est plus fiable.
+- **Soft cleanup via PID file**: server.ts écrit son PID à start, le
+  retire à exit. Robuste si exit gracieux, mais les zombies ici sont
+  des morts brutaux (claude crash) → fichier PID stale.
+- **Laisser launchd faire**: pas applicable, launchd ne tracke pas
+  les enfants spawned par ses workloads.
+
+**Pattern réutilisable** pour autres plugins claude --channels avec
+MCP stateful (Discord epsilon n'est PAS concerné car Anthropic-managed,
+mais tout futur plugin custom qui maintient une connexion externe).
+Le pattern serait à upstream chez Anthropic ou packager comme
+`channels-launcher` skill.
+
+**Prediction**: Plus de "bot silencieux" post-restart. Si fail-fast
+trigger (survivors > 0 post-pkill), ça apparaîtra dans
+`logs/channel.stderr.log` avec le message clair "orphan bun MCP
+survived pkill". Diagnostic facile.
+
+**Revisit signals**:
+- Si fail-fast trigger souvent (>1×/jour) → enquêter pourquoi pkill
+  rate (race avec launchd? permission? bun unkillable?)
+- Si Anthropic upstream un cleanup natif → retirer notre pkill
+- Si zombies réapparaissent malgré pkill → switch vers SIGKILL au
+  lieu de SIGTERM par défaut
+
+**Coût de revoir**: faible. Le pkill+fail-fast est isolé dans le
+launcher, ~10 lignes. Suppression triviale.
+
+**Owner**: guillaume. **Commit**: 314a65e.
