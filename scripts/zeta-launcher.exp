@@ -9,7 +9,7 @@
 set timeout -1
 log_user 1
 
-cd /Users/guillaume/dev/nestor/ai-gateway-zeta
+cd /Users/guillaume/dev/nestor/claude-channels-slack
 
 # Defensive cleanup: kill any orphan bun MCP processes from prior runs.
 # Without this, restarts accumulate orphans (PPID=1 after parent claude
@@ -18,14 +18,14 @@ cd /Users/guillaume/dev/nestor/ai-gateway-zeta
 # Symptom: bot reactions still fire (old bun) but claude never sees the
 # inbound notification (new bun connects but Slack delivers to oldest).
 # See ~/.claude/projects/.../memory/feedback_zeta_orphan_bun.md.
-exec pkill -f {bun.*ai-gateway-zeta/marketplace/external_plugins/slack-zeta}
+exec pkill -f {bun.*claude-channels-slack/marketplace/external_plugins/slack-zeta}
 sleep 1
 
 # Fail-fast: if any bun MCP for this plugin survived the pkill (race or
 # permission failure), exit non-zero. Letting launchd respawn after the
 # zombie naturally dies is safer than spawning a silent-bot.
 # macOS pgrep has no -c; pipe through wc. Pattern in single-quotes for sh.
-set survivors [string trim [exec sh -c "pgrep -f 'bun.*ai-gateway-zeta/marketplace/external_plugins/slack-zeta' | wc -l"]]
+set survivors [string trim [exec sh -c "pgrep -f 'bun.*claude-channels-slack/marketplace/external_plugins/slack-zeta' | wc -l"]]
 if {$survivors > 0} {
     puts stderr "zeta-launcher: $survivors orphan bun MCP survived pkill — exiting (launchd will respawn)"
     exit 1

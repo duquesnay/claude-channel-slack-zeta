@@ -2,7 +2,7 @@
   "mcpServers": {
     "slack-zeta": {
       "command": "bun",
-      "args": ["run", "--cwd", "/Users/guillaume/dev/nestor/ai-gateway-zeta/plugin", "--shell=bun", "--silent", "start"]
+      "args": ["run", "--cwd", "/Users/guillaume/dev/nestor/claude-channels-slack/plugin", "--shell=bun", "--silent", "start"]
     }
   }
 }

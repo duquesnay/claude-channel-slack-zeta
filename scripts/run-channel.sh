@@ -8,9 +8,9 @@ set -euo pipefail
 export PATH="/opt/homebrew/bin:/Users/guillaume/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export HOME="/Users/guillaume"
 
-LOGDIR="$HOME/dev/nestor/ai-gateway-zeta/logs"
+LOGDIR="$HOME/dev/nestor/claude-channels-slack/logs"
 mkdir -p "$LOGDIR"
 
 exec /usr/bin/expect -f \
-  /Users/guillaume/dev/nestor/ai-gateway-zeta/scripts/zeta-launcher.exp \
+  /Users/guillaume/dev/nestor/claude-channels-slack/scripts/zeta-launcher.exp \
   >>"$LOGDIR/channel.stdout.log" 2>>"$LOGDIR/channel.stderr.log"
