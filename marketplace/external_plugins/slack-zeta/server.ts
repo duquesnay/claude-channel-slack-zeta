@@ -533,6 +533,17 @@ socket.on('error', err => {
   process.stderr.write(`slack-zeta: socket error: ${err}\n`)
 })
 
+// Diagnostic — log every Slack envelope so we can see whether events
+// are arriving at all when 'message' handler stays silent. The handler
+// for 'message' destructures {event, ack} and may throw silently if
+// the envelope shape isn't what we expect; this fires unconditionally.
+socket.on('slack_event', (envelope: any) => {
+  const evType = envelope?.body?.event?.type ?? envelope?.type ?? '?'
+  const evCh = envelope?.body?.event?.channel ?? '?'
+  const evCt = envelope?.body?.event?.channel_type ?? '?'
+  process.stderr.write(`slack-zeta: slack_event type=${evType} channel=${evCh} channel_type=${evCt}\n`)
+})
+
 // ============================================================================
 // Boot
 // ============================================================================

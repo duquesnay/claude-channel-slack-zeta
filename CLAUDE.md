@@ -205,3 +205,48 @@ Voir [`docs/slack-app-manifest.yaml`](docs/slack-app-manifest.yaml).
 Le pattern jasquier est plus mature en prod; zeta est le proof of
 concept pour un futur unifié (un seul mécanisme channels pour
 tous les bots).
+
+## Project Learnings
+
+### 2026-05-10 — Bot silencieux malgré reactions/status
+
+**Methodological:**
+- **Standalone test client comme outil de triage** quand une
+  intégration est silencieuse. On a écrit un mini bun script avec
+  les mêmes tokens + SDK mais aucune logique métier (juste
+  `console.error` sur events reçus). Result: événements arrivaient
+  bien côté Slack → le bug était entre bun MCP et claude --channels,
+  pas entre Slack et bun. Sans ce test, on aurait passé une heure
+  à debugger les mauvaises hypothèses (Slack-side vs notre code).
+  Pattern réutilisable pour tout intégrateur avec multi-couche.
+
+**Technical:**
+- **Single-client protocols + zombies = trou noir silencieux.** Slack
+  Socket Mode = un seul client par xapp- token. Quand
+  `claude --channels` est restart à répétition, les anciens `bun
+  server.ts` deviennent orphans (PPID=1) mais continuent à monopoliser
+  la session WS. Slack délivre au plus ancien — qui n'a plus de
+  parent claude qui écoute → events disparaissent. Symptôme piège:
+  réactions/status fonctionnent (le vieux bun les pose côté Slack
+  API directe), mais claude ne reçoit jamais la notification MCP.
+  Toujours `pgrep -af "bun.*<plugin>" | wc -l` avant de conclure
+  "config Slack cassée" — si > 2, kill orphans d'abord.
+  Mitigation mécanisée: pkill défensif + assertion fail-fast au
+  boot du `zeta-launcher.exp`.
+
+- **`--dangerously-load-development-channels` REMPLACE `--channels`**,
+  ne s'additionne pas. Avec `--resume` qui restaure le `--channels`
+  de la session précédente + `--dangerously` qui rajoute, on obtient
+  une duplication ("Listening for channel messages from: X, X" dans
+  le TUI) ET un session ID mismatch (registration sous l'ancien ID
+  de session, runtime sous le nouveau) → notifications routées vers
+  une session morte. Use one or the other, never both.
+
+**Proposed Decision Anchors:**
+- **Cleanup pre-spawn dans launcher**: doit-on garder pkill
+  défensif + assertion fail-fast (notre choix) ou exiger
+  rotation manuelle?
+- **--resume vs fresh sessions**: continuité de transcript vs
+  risque de duplication channels. Choix actuel: fresh (sans
+  --resume) jusqu'à ce que claude code corrige le merge --resume +
+  --dangerously.
