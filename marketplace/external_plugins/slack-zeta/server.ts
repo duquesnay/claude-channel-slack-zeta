@@ -137,7 +137,7 @@ function gate(senderId: string, chatId: string): GateResult {
 // ============================================================================
 
 const mcp = new Server(
-  { name: 'slack-zeta', version: '1.0.0' },
+  { name: 'slack-zeta', version: '1.1.0' },
   {
     capabilities: {
       tools: {},
@@ -155,9 +155,9 @@ const mcp = new Server(
       '',
       'MANDATORY: reply_open MUST be your very first tool call after receiving any inbound message — before any Read, Write, Edit, Bash, or other tool. Never do work first and reply later.',
       '',
-      'Response protocol (streaming — required for every response):',
-      '  1. reply_open(chat_id) → FIRST call, before any other tool. Posts an acknowledgment message. Returns a handle.',
-      '  2. reply_chunk(handle, text) → Stream progress as you work. Call after each meaningful step (e.g. "Reading file X…", "Editing Y…", "Running tests…"). Pass FULL accumulated text each time, not deltas.',
+      'Response protocol (streaming — all responses use this):',
+      '  1. reply_open(chat_id) → FIRST call, before any other tool. Posts a placeholder. Returns a handle.',
+      '  2. reply_chunk(handle, text) → Update as you work. Pass FULL accumulated text each time, not deltas.',
       '  3. reply_close(handle) → Final call with the complete result.',
       '',
       'Slack rate-limits chat.update to ~1/sec — reply_chunk calls faster than 600ms get coalesced. Pass FULL text each time, not deltas.',
@@ -222,19 +222,6 @@ mcp.setNotificationHandler(PermissionRequestSchema, async ({ params }) => {
 
 mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
-    {
-      name: 'reply',
-      description: 'Reply on Slack in one shot. Use for short responses. Pass chat_id from the inbound <channel> tag.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          chat_id: { type: 'string' },
-          text: { type: 'string' },
-          thread_ts: { type: 'string', description: 'Optional. ts of a message to thread under.' },
-        },
-        required: ['chat_id', 'text'],
-      },
-    },
     {
       name: 'reply_open',
       description: 'Start a streaming reply. Posts an empty placeholder message and returns a handle (Slack ts). Use reply_chunk with this handle to grow the message; reply_close to finalize. For long/multi-paragraph responses.',
@@ -339,14 +326,6 @@ async function assertAllowlisted(chat_id: string, access: Access) {
 mcp.setRequestHandler(CallToolRequestSchema, async req => {
   const access = loadAccess()
   const args = req.params.arguments as Record<string, unknown>
-
-  if (req.params.name === 'reply') {
-    const { chat_id, text, thread_ts } = args as { chat_id: string; text: string; thread_ts?: string }
-    await assertAllowlisted(chat_id, access)
-    const res = await slack.chat.postMessage({ channel: chat_id, text, thread_ts })
-    ackReplied(chat_id, access)
-    return { content: [{ type: 'text', text: `sent ts=${res.ts}` }] }
-  }
 
   if (req.params.name === 'reply_open') {
     const { chat_id, thread_ts } = args as { chat_id: string; thread_ts?: string }
