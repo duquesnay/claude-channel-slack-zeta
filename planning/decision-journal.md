@@ -104,3 +104,64 @@ survived pkill". Diagnostic facile.
 launcher, ~10 lignes. Suppression triviale.
 
 **Owner**: guillaume. **Commit**: 314a65e.
+
+---
+
+## 2026-05-10 — Drop --resume (perte de continuité transcript)
+
+**Status**: Active
+
+**Problem**: La combinaison `claude --resume <session>
+--dangerously-load-development-channels plugin:X@Y` provoquait deux
+bugs cumulés qui rendaient le bot silencieux malgré des réactions
+Slack qui arrivaient (👀, status):
+1. **Duplication de channel registration** — TUI affichait
+   "Listening for channel messages from: plugin:X@Y, plugin:X@Y"
+2. **Session ID mismatch** — MCP subscription enregistrée sous
+   l'ancien session ID (resume), mais claude tournait sous un
+   nouveau ID. Notifications routées vers session morte → trou noir.
+
+**Root Cause**: Side effect de comment claude code merge `--resume`
+(qui restaure les flags d'origine, dont `--channels`) avec
+`--dangerously-load-development-channels` (qui ajoute le même
+channel en mode dev). Pas de désambiguation côté claude code; les
+deux entries cohabitent et le routing notification favorise la
+mauvaise.
+
+**Counter-measure**: Retirer `--resume claude_of_slack` du
+`scripts/zeta-launcher.exp`. Chaque restart commence avec une
+session fresh — perte de continuité transcript Slack-side, mais
+les messages Slack eux-mêmes restent dans l'historique côté
+Slack (rien perdu pour l'utilisateur final, juste le contexte
+interne de claude qui repart à zéro).
+
+**Alternatives écartées**:
+- **Custom session-id stable**: passer `--session-id <uuid>` fixe
+  pour avoir un ID prévisible. Possible mais ne résout pas la
+  duplication channel (--resume ferait toujours la double-reg).
+- **Merger en aval avec --fork-session**: --fork-session crée un
+  nouveau ID en gardant le transcript. Pourrait éviter le
+  mismatch mais doc dit "use with --resume" — on n'a pas testé.
+  À explorer si on a un besoin urgent de continuité.
+- **Patch upstream claude code**: la bonne solution mais hors-scope
+  (pas notre repo).
+
+**Pattern réutilisable**: Tout futur plugin claude --channels en
+dev mode (--dangerously-load-development-channels) devrait éviter
+--resume jusqu'à fix upstream.
+
+**Prediction**: Bot opérationnel à chaque restart sans intervention.
+Conversation Slack sans "mémoire" entre sessions claude — chaque
+restart, le bot ne se souvient pas des échanges précédents (mais
+peut relire l'historique Slack via fetch_messages s'il existe un
+tel tool).
+
+**Revisit signals**:
+- Anthropic ship un fix --resume + --dangerously (changelog claude code)
+- Besoin utilisateur explicite de continuité contextuelle inter-restart
+- Tests confirment que --fork-session contourne le bug
+
+**Coût de revoir**: trivial. Re-ajouter `--resume claude_of_slack`
+en première ligne du `spawn` dans launcher.exp.
+
+**Owner**: guillaume. **Commit**: à venir.

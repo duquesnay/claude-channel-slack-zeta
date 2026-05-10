@@ -181,6 +181,32 @@ silence — la pensée s'est terminée mais le tool call est bloqué.
 chargement des MCPs entièrement** (claude reste vivant mais sans
 plugins). À ne PAS utiliser.
 
+### Gotcha #5 — `--resume` + `--dangerously-load-development-channels` = bot silencieux
+
+Combiner `--resume <session>` avec `--dangerously-load-development-channels`
+provoque deux bugs cumulés:
+1. **Duplication channels**: --resume restaure la session avec son
+   `--channels` d'origine; --dangerously rajoute le channel à
+   nouveau. TUI affiche "Listening for channel messages from:
+   plugin:X@Y, plugin:X@Y" (deux fois la même chose).
+2. **Session ID mismatch**: la subscription MCP s'enregistre sous
+   l'ancien session ID (de la session resumée), mais claude tourne
+   sous un nouveau session ID. Les notifications routées vers
+   l'ancien ID disparaissent — claude ne reçoit jamais l'inbound,
+   bot reste silencieux.
+
+Symptôme: réactions/status arrivent (le bun MCP fait ça côté Slack
+direct) mais aucun "← slack-zeta · ..." dans le TUI claude, pas de
+réponse en Slack.
+
+Workaround actuel: lancer **sans --resume** (perte de continuité
+transcript). Le launcher.exp ne passe plus --resume depuis 2026-05-10.
+
+Si Anthropic fixe le merge --resume + --dangerously, on pourra
+restaurer --resume. Voir
+[`planning/decision-journal.md`](planning/decision-journal.md)
+"Drop --resume".
+
 ### Gotcha #4 — Slack `assistant` mode
 
 Pour activer la **Messages Tab** dans le DM avec le bot (sinon le

@@ -32,11 +32,14 @@ if {$survivors > 0} {
 }
 
 spawn /opt/homebrew/bin/claude \
-    --resume claude_of_slack \
     --dangerously-load-development-channels plugin:slack-zeta@ai-gateway-zeta \
     --name claude_of_slack \
     --permission-mode auto \
     --allowedTools "mcp__plugin_slack-zeta_slack-zeta__*"
+# NOTE: pas de --resume. Voir decision-journal "Drop --resume" et
+# CLAUDE.md Gotcha #5 — combiner --resume + --dangerously cause une
+# duplication de channel registration et un session ID mismatch
+# (notifications routées vers session morte → bot silencieux).
 
 # Blind Enter sends to dismiss the dev-channels TUI confirmation.
 # Robust against prompt-text changes; no-op if prompt no longer appears.
