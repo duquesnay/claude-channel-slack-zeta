@@ -24,10 +24,22 @@ import {
 import { SocketModeClient } from '@slack/socket-mode'
 import { WebClient } from '@slack/web-api'
 import { randomBytes } from 'crypto'
-import { readFileSync, writeFileSync, mkdirSync, chmodSync } from 'fs'
+import { readFileSync, writeFileSync, mkdirSync, chmodSync, appendFileSync, existsSync, unlinkSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 import { z } from 'zod'
+import { createServer as createNetServer } from 'net'
+
+// TEST_MODE=1: Unix socket admin + no-op all Slack API calls + write replies
+// to TEST_LOG_FILE. Activated only via SLACK_ZETA_TEST_MODE=1 env var.
+// Never active in production (env var not set in launchd plist).
+const TEST_MODE = process.env.SLACK_ZETA_TEST_MODE === '1'
+const TEST_SOCKET_PATH = process.env.SLACK_ZETA_TEST_SOCKET ?? '/tmp/slack-zeta-test.sock'
+const TEST_LOG_FILE = process.env.SLACK_ZETA_TEST_LOG ?? '/tmp/slack-zeta-test.log'
+
+if (TEST_MODE) {
+  process.stderr.write(`slack-zeta: TEST_MODE active — socket=${TEST_SOCKET_PATH} log=${TEST_LOG_FILE}\n`)
+}
 
 const STATE_DIR = process.env.SLACK_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'slack-zeta')
 const ACCESS_FILE = join(STATE_DIR, 'access.json')
@@ -281,6 +293,10 @@ async function flushChunk(handle: string) {
   s.pendingText = null
   s.lastUpdateAt = Date.now()
   s.flushTimer = null
+  if (TEST_MODE) {
+    process.stderr.write(`slack-zeta[TEST]: chat.update channel=${s.channel} ts=${handle} text=${JSON.stringify(text.slice(0, 120))}\n`)
+    return
+  }
   try {
     await slack.chat.update({ channel: s.channel, ts: handle, text })
   } catch (err) {
@@ -329,6 +345,14 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
 
   if (req.params.name === 'reply_open') {
     const { chat_id, thread_ts } = args as { chat_id: string; thread_ts?: string }
+    if (TEST_MODE) {
+      // In test mode: skip allowlist check and Slack API; generate a fake handle.
+      const fakeTs = `test-${Date.now()}.${Math.random().toString(36).slice(2, 7)}`
+      streams.set(fakeTs, { channel: chat_id, thread_ts, lastUpdateAt: 0, pendingText: null, flushTimer: null })
+      process.stderr.write(`slack-zeta[TEST]: reply_open chat_id=${chat_id} handle=${fakeTs}\n`)
+      appendFileSync(TEST_LOG_FILE, JSON.stringify({ event: 'reply_open', chat_id, handle: fakeTs, ts: Date.now() }) + '\n')
+      return { content: [{ type: 'text', text: `handle=${fakeTs}` }] }
+    }
     await assertAllowlisted(chat_id, access)
     // Slack rejects empty text; use a thin placeholder we'll overwrite.
     const res = await slack.chat.postMessage({ channel: chat_id, text: '…', thread_ts })
@@ -369,8 +393,14 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
       s.flushTimer = null
     }
     if (text !== undefined) s.pendingText = text
+    const finalText = s.pendingText
     if (s.pendingText !== null) await flushChunk(handle)
     streams.delete(handle)
+    if (TEST_MODE) {
+      process.stderr.write(`slack-zeta[TEST]: reply_close handle=${handle} text=${JSON.stringify((finalText ?? text ?? '').slice(0, 120))}\n`)
+      appendFileSync(TEST_LOG_FILE, JSON.stringify({ event: 'reply_close', handle, text: finalText ?? text ?? null, ts: Date.now() }) + '\n')
+      return { content: [{ type: 'text', text: 'closed' }] }
+    }
     ackReplied(s.channel, access)
     return { content: [{ type: 'text', text: 'closed' }] }
   }
@@ -402,6 +432,7 @@ const lastInbound = new Map<string, { ts: string; reaction: string }>()
 // and we silently continue (the reaction-based progression in setReaction()
 // covers the same UX without needing this).
 async function setStatus(chatId: string, threadTs: string, status: string) {
+  if (TEST_MODE) return
   try {
     // @ts-ignore — assistant.threads.setStatus may be missing from older
     // @slack/web-api type defs but the runtime API is stable.
@@ -421,6 +452,7 @@ async function setStatus(chatId: string, threadTs: string, status: string) {
 }
 
 async function setReaction(chatId: string, newName: string) {
+  if (TEST_MODE) return
   const cur = lastInbound.get(chatId)
   if (!cur) return
   if (cur.reaction === newName) return
@@ -443,8 +475,22 @@ async function setReaction(chatId: string, newName: string) {
   await Promise.all(tasks)
 }
 
-socket.on('message', async ({ event, ack }) => {
-  await ack()
+// ============================================================================
+// Inbound message handler — extracted so test injection can call it directly
+// without going through Slack Socket Mode.
+// ============================================================================
+
+interface InboundEvent {
+  user: string
+  text: string
+  channel: string
+  channel_type: string
+  ts: string
+  subtype?: string
+  bot_id?: string
+}
+
+async function handleInboundMessage(event: InboundEvent): Promise<void> {
   // Skip bot/edited/deleted/etc. We only deliver fresh user messages.
   if (event.subtype || event.bot_id) return
   if (!event.user || !event.text || !event.channel) return
@@ -456,18 +502,29 @@ socket.on('message', async ({ event, ack }) => {
   const chatId: string = event.channel
   dmChannelUsers.set(chatId, senderId)
 
-  const result = gate(senderId, chatId)
+  // In TEST_MODE: bypass gate() — the injected event is pre-authorized.
+  // Pre-seed allowFrom in access.json is not needed; we skip gate entirely.
+  let result: GateResult
+  if (TEST_MODE) {
+    const access = loadAccess()
+    result = { action: 'deliver', access }
+  } else {
+    result = gate(senderId, chatId)
+  }
+
   if (result.action === 'drop') return
 
   if (result.action === 'pair') {
     const lead = result.isResend ? 'Still pending' : 'Pairing required'
-    try {
-      await slack.chat.postMessage({
-        channel: chatId,
-        text: `${lead} — run in Claude Code:\n\n/slack-zeta:access pair ${result.code}`,
-      })
-    } catch (err) {
-      process.stderr.write(`slack-zeta: failed to send pairing code: ${err}\n`)
+    if (!TEST_MODE) {
+      try {
+        await slack.chat.postMessage({
+          channel: chatId,
+          text: `${lead} — run in Claude Code:\n\n/slack-zeta:access pair ${result.code}`,
+        })
+      } catch (err) {
+        process.stderr.write(`slack-zeta: failed to send pairing code: ${err}\n`)
+      }
     }
     return
   }
@@ -486,19 +543,22 @@ socket.on('message', async ({ event, ack }) => {
         behavior: allow ? 'allow' : 'deny',
       },
     })
-    // React to acknowledge — the user knows their verdict was recorded.
-    void slack.reactions.add({
-      channel: chatId,
-      timestamp: event.ts,
-      name: allow ? 'white_check_mark' : 'x',
-    }).catch(() => {})
+    if (!TEST_MODE) {
+      // React to acknowledge — the user knows their verdict was recorded.
+      void slack.reactions.add({
+        channel: chatId,
+        timestamp: event.ts,
+        name: allow ? 'white_check_mark' : 'x',
+      }).catch(() => {})
+    }
     return
   }
 
   // Ack reaction — instant feedback to the sender. Tracked in lastInbound
   // so the reply tool / permission relay can swap it (👀 → ⏳ → ✅).
-  // Fire-and-forget; the response path must not wait.
-  if (result.access.ackReaction) {
+  // Fire-and-forget; the response path must not wait. No-op in TEST_MODE
+  // (setReaction guards itself, but we skip lastInbound setup too).
+  if (result.access.ackReaction && !TEST_MODE) {
     lastInbound.set(chatId, { ts: event.ts, reaction: '' })
     void setReaction(chatId, result.access.ackReaction)
   }
@@ -508,6 +568,7 @@ socket.on('message', async ({ event, ack }) => {
   void setStatus(chatId, event.ts, 'is thinking…')
 
   // deliver
+  process.stderr.write(`slack-zeta: delivering inbound chat_id=${chatId} text=${JSON.stringify(event.text.slice(0, 80))}\n`)
   mcp.notification({
     method: 'notifications/claude/channel',
     params: {
@@ -523,6 +584,11 @@ socket.on('message', async ({ event, ack }) => {
   }).catch(err => {
     process.stderr.write(`slack-zeta: failed to deliver inbound to Claude: ${err}\n`)
   })
+}
+
+socket.on('message', async ({ event, ack }) => {
+  await ack()
+  await handleInboundMessage(event as InboundEvent)
 })
 
 socket.on('connected', () => {
@@ -545,12 +611,77 @@ socket.on('slack_event', (envelope: any) => {
 })
 
 // ============================================================================
+// Test admin socket — ONLY active when SLACK_ZETA_TEST_MODE=1.
+// Accepts a single JSON line per connection:
+//   {"text": "...", "user_id": "U...", "chat_id": "D..."}
+// Synthesizes an InboundEvent and calls handleInboundMessage() directly,
+// bypassing Slack Socket Mode entirely. Used by tests/test-mcp-injection.ts.
+// ============================================================================
+
+function startTestAdminSocket(): void {
+  if (!TEST_MODE) return
+
+  // Clean up stale socket file from a prior run.
+  if (existsSync(TEST_SOCKET_PATH)) {
+    try { unlinkSync(TEST_SOCKET_PATH) } catch {}
+  }
+
+  const server = createNetServer(conn => {
+    let buf = ''
+    conn.on('data', chunk => {
+      buf += chunk.toString()
+      const nl = buf.indexOf('\n')
+      if (nl === -1) return
+      const line = buf.slice(0, nl).trim()
+      buf = buf.slice(nl + 1)
+      let payload: { text: string; user_id: string; chat_id: string }
+      try {
+        payload = JSON.parse(line)
+      } catch (err) {
+        conn.end(JSON.stringify({ ok: false, error: `JSON parse: ${err}` }) + '\n')
+        return
+      }
+      const fakeTs = `${(Date.now() / 1000).toFixed(6)}`
+      const event: InboundEvent = {
+        user: payload.user_id,
+        text: payload.text,
+        channel: payload.chat_id,
+        channel_type: 'im',
+        ts: fakeTs,
+      }
+      process.stderr.write(`slack-zeta[TEST]: admin inject text=${JSON.stringify(payload.text.slice(0, 80))}\n`)
+      appendFileSync(TEST_LOG_FILE, JSON.stringify({ event: 'inject', payload, ts: Date.now() }) + '\n')
+      conn.end(JSON.stringify({ ok: true, fakeTs }) + '\n')
+      handleInboundMessage(event).catch(err => {
+        process.stderr.write(`slack-zeta[TEST]: handleInboundMessage error: ${err}\n`)
+      })
+    })
+    conn.on('error', err => {
+      process.stderr.write(`slack-zeta[TEST]: admin conn error: ${err}\n`)
+    })
+  })
+
+  server.listen(TEST_SOCKET_PATH, () => {
+    process.stderr.write(`slack-zeta[TEST]: admin socket listening at ${TEST_SOCKET_PATH}\n`)
+  })
+
+  server.on('error', err => {
+    process.stderr.write(`slack-zeta[TEST]: admin socket error: ${err}\n`)
+  })
+}
+
+// ============================================================================
 // Boot
 // ============================================================================
 
 async function main() {
   await mcp.connect(new StdioServerTransport())
-  await socket.start()
+  startTestAdminSocket()
+  if (!TEST_MODE) {
+    await socket.start()
+  } else {
+    process.stderr.write(`slack-zeta[TEST]: Socket Mode DISABLED — using admin socket only\n`)
+  }
 }
 
 main().catch(err => {
